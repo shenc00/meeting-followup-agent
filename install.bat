@@ -119,6 +119,16 @@ if errorlevel 1 (
 )
 echo        All packages installed successfully
 
+:: pywin32 requires a post-install step to register COM components
+echo.
+echo        Finalising pywin32 COM registration...
+python .venv\Scripts\pywin32_postinstall.py -install >nul 2>&1
+if errorlevel 1 (
+    echo        pywin32 post-install returned a warning — usually safe to ignore.
+) else (
+    echo        pywin32 COM components registered.
+)
+
 :: ?? 6. First-time config and data directory ??????????????????
 echo.
 echo [6/6] Setting up configuration...

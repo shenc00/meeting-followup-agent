@@ -17,11 +17,16 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def _get_agent(config: Optional[str] = None):
+def _get_agent(config: Optional[str] = None, use_outlook: bool = False):
     """Lazy import to keep CLI startup fast."""
     from meeting_agent.agent import MeetingFollowUpAgent
     settings = load_settings(config)
-    return MeetingFollowUpAgent(settings=settings)
+    graph_client = None
+    if use_outlook:
+        from meeting_agent.integrations.outlook_com import OutlookCOMClient
+        graph_client = OutlookCOMClient()
+        console.print("[cyan]Using local Outlook (COM) — no Azure AD permissions required.[/cyan]")
+    return MeetingFollowUpAgent(settings=settings, graph_client=graph_client)
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -31,6 +36,7 @@ def process(
     meeting_id: Optional[str] = typer.Option(None, "--meeting-id", "-m", help="Process a specific meeting by ID"),
     all_pending: bool = typer.Option(False, "--all", "-a", help="Process all pending meetings"),
     lookback: int = typer.Option(24, "--lookback", help="Lookback window in hours (used with --all)"),
+    use_outlook: bool = typer.Option(False, "--use-outlook", help="Use local Outlook COM instead of Graph API (no admin consent needed)"),
     config: Optional[str] = typer.Option(None, "--config", help="Path to config.yaml"),
 ) -> None:
     """Process meeting(s) and extract action items."""
@@ -38,7 +44,7 @@ def process(
         console.print("[red]Specify --meeting-id <id> or --all[/red]")
         raise typer.Exit(1)
 
-    agent = _get_agent(config)
+    agent = _get_agent(config, use_outlook=use_outlook)
 
     if meeting_id:
         result = agent.process_meeting(meeting_id)
@@ -48,6 +54,78 @@ def process(
         console.print(f"\nProcessed [bold]{len(results)}[/bold] meeting(s).")
         for r in results:
             _print_result(r)
+
+
+@app.command(name="from-file")
+def from_file(
+    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Path to facilitator notes (.txt / .md)"),
+    transcript: Optional[str] = typer.Option(None, "--transcript", "-t", help="Path to transcript file"),
+    chat: Optional[str] = typer.Option(None, "--chat", "-c", help="Path to chat export file"),
+    title: str = typer.Option("Meeting", "--title", help="Meeting title"),
+    date: str = typer.Option(None, "--date", "-d", help="Meeting date ISO format e.g. 2026-06-26T10:00 (defaults to now)"),
+    meeting_id: str = typer.Option(None, "--meeting-id", "-m", help="Optional stable ID for this meeting"),
+    use_outlook: bool = typer.Option(False, "--use-outlook", help="Save email drafts to local Outlook"),
+    config: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Process a meeting from local files — no Microsoft 365 connection required."""
+    from datetime import datetime as dt
+    from meeting_agent.engines.ingestion import MeetingIngestionEngine
+    from meeting_agent.engines.extraction import ActionExtractionEngine
+    from meeting_agent.engines.ownership import OwnershipEngine
+    from meeting_agent.engines.followup import FollowUpEngine
+    from meeting_agent.engines.email_generation import EmailGenerationEngine
+    from meeting_agent.engines.task_management import TaskManagementEngine
+    from meeting_agent.engines.governance import GovernanceEngine
+    from meeting_agent.engines.documentation import DocumentationEngine
+    import uuid
+
+    if not notes and not transcript and not chat:
+        console.print("[red]Provide at least one of --notes, --transcript, or --chat[/red]")
+        raise typer.Exit(1)
+
+    settings = load_settings(config)
+    graph_client = None
+    if use_outlook:
+        from meeting_agent.integrations.outlook_com import OutlookCOMClient
+        graph_client = OutlookCOMClient()
+
+    mid = meeting_id or str(uuid.uuid4())[:8]
+    date_str = date or dt.now().isoformat()
+
+    console.print(f"\nProcessing meeting [bold]{title}[/bold] from local files...")
+
+    ingestion   = MeetingIngestionEngine(settings)
+    extraction  = ActionExtractionEngine(settings)
+    ownership   = OwnershipEngine(settings)
+    followup    = FollowUpEngine(settings)
+    email_gen   = EmailGenerationEngine(settings, graph_client=graph_client)
+    task_engine = TaskManagementEngine(settings)
+    governance  = GovernanceEngine()
+    doc_engine  = DocumentationEngine(settings, task_engine)
+
+    context = ingestion.ingest_from_files(
+        meeting_id=mid,
+        title=title,
+        date_str=date_str,
+        notes_path=notes,
+        transcript_path=transcript,
+        chat_path=chat,
+    )
+
+    actions = extraction.extract(context)
+    ownership.resolve(actions, context)
+    plans   = followup.build_plans(actions, context)
+    emails  = email_gen.generate(actions, plans, context)
+    tasks   = [task_engine.upsert_from_action(a, mid) for a in actions]
+    summary = doc_engine.generate_meeting_summary(context, tasks)
+
+    _print_result({
+        "meeting_id": mid,
+        "tasks": tasks,
+        "emails": emails,
+        "meeting_requests": [],
+        "summary": summary,
+    })
 
 
 @app.command()

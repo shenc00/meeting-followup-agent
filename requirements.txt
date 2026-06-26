@@ -15,6 +15,9 @@ tiktoken>=0.7.0
 # ── Microsoft Graph (Outlook / Teams / Calendar) ──────────────────────────────
 msal>=1.29.0
 
+# ── Local Outlook COM automation (no admin consent required) ──────────────────
+pywin32>=306
+
 # ── Persistence ───────────────────────────────────────────────────────────────
 tinydb>=4.8.0
 tinydb-serialization>=2.1.0
