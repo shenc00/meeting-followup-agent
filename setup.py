@@ -17,7 +17,6 @@ setup(
         "openai>=1.35.0",
         "tiktoken>=0.7.0",
         "msal>=1.29.0",
-        "msgraph-sdk>=1.5.0",
         "tinydb>=4.8.0",
         "tinydb-serialization>=2.1.0",
         "croniter>=2.0.5",

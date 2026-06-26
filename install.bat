@@ -69,7 +69,14 @@ if errorlevel 1 (
 !PYTHON_CMD! -m pip install --upgrade pip --quiet 2>nul
 echo        pip OK
 
-:: ?? 3. Create virtual environment ????????????????????????????
+:: ── Enable Windows long paths (avoids MAX_PATH errors in deep packages) ──────
+echo.
+echo [2b] Enabling Windows long path support...
+powershell -NoProfile -Command ^
+    "Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -Value 1 -Type DWord -ErrorAction SilentlyContinue"
+!PYTHON_CMD! -m pip config set global.no-cache-dir false >nul 2>&1
+
+:: ── 3. Create virtual environment ────────────────────────────
 echo.
 echo [3/6] Creating virtual environment (.venv)...
 if exist .venv (

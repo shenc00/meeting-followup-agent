@@ -14,7 +14,6 @@ tiktoken>=0.7.0
 
 # ── Microsoft Graph (Outlook / Teams / Calendar) ──────────────────────────────
 msal>=1.29.0
-msgraph-sdk>=1.5.0
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 tinydb>=4.8.0
