@@ -52,7 +52,10 @@ class GraphAuthClient:
         # 2. Try interactive browser (works when a GUI is available)
         if not result:
             try:
-                result = self._app.acquire_token_interactive(scopes=self._scopes)
+                result = self._app.acquire_token_interactive(
+                    scopes=self._scopes,
+                    redirect_uri="http://localhost",
+                )
             except Exception:
                 result = None
 
