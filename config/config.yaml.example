@@ -1,0 +1,48 @@
+# ── Identity ──────────────────────────────────────────────────────────────────
+primary_user:
+  name: "Sally"                         # Display name used in meeting content
+  email: "sally@example.com"            # Your Microsoft 365 email
+
+# ── Microsoft Graph / Azure AD ────────────────────────────────────────────────
+graph:
+  tenant_id: "YOUR_TENANT_ID"
+  client_id: "YOUR_CLIENT_ID"
+  client_secret: "YOUR_CLIENT_SECRET"   # Use env var GRAPH_CLIENT_SECRET instead
+  authority: "https://login.microsoftonline.com/{tenant_id}"
+  scopes:
+    - "https://graph.microsoft.com/Mail.ReadWrite"
+    - "https://graph.microsoft.com/Mail.Send"
+    - "https://graph.microsoft.com/Calendars.ReadWrite"
+    - "https://graph.microsoft.com/OnlineMeetings.ReadWrite"
+    - "https://graph.microsoft.com/Chat.Read"
+  token_cache_path: "token_cache.bin"
+
+# ── AI / LLM ──────────────────────────────────────────────────────────────────
+llm:
+  provider: "azure_openai"             # "azure_openai" or "openai"
+  model: "gpt-4o"
+  api_key: "YOUR_OPENAI_KEY"           # Use env var OPENAI_API_KEY instead
+  azure_endpoint: "https://YOUR_RESOURCE.openai.azure.com/"
+  azure_api_version: "2024-02-01"
+  azure_deployment: "gpt-4o"
+  temperature: 0.1                     # Low temperature for deterministic extraction
+  max_tokens: 4096
+
+# ── Behaviour ─────────────────────────────────────────────────────────────────
+email_mode: "draft"                    # draft | approval | auto_send
+scheduling_mode: "draft"              # draft | approval | auto_schedule
+
+# ── Reminders ─────────────────────────────────────────────────────────────────
+reminder:
+  no_response_days: 5                  # Days after sending before drafting a reminder
+  escalation_days: 14                  # Days of no progress before recommending escalation
+  daily_summary: true
+  weekly_summary: true
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+storage:
+  db_path: "data/actions.json"
+  meeting_db_path: "data/meetings.json"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_level: "INFO"

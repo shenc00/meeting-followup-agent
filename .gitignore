@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Config with secrets — never commit the live config
+config/config.yaml
+
+# Local database
+data/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Token cache (MSAL)
+token_cache.bin
