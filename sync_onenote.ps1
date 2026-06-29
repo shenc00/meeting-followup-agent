@@ -104,21 +104,26 @@ if ($loopFile) {
     Write-Host ("  Found : " + $loopFile.BaseName) -ForegroundColor Green
     Add-Type -AssemblyName System.Windows.Forms
 
-    # --- Strategy A: Read .loop bytes directly — no browser, no manual steps ---
+    # --- Strategy A: Read .loop bytes directly - no browser, no manual steps ---
     $loopText = $null
     Write-Host "  Reading .loop file from disk..." -ForegroundColor Gray
     try {
-        $rawBytes = [System.IO.File]::ReadAllBytes($loopFile.FullName)
-        $rawText  = [System.Text.Encoding]::UTF8.GetString($rawBytes)
-        # Extract readable sequences: starts with a letter, 10+ printable chars
-        $blocks   = [regex]::Matches($rawText, '[A-Za-z][A-Za-z0-9 .,!?:;()\-]{9,}') |
-            ForEach-Object { $_.Value.Trim() } |
-            Where-Object { ($_ -replace '[^A-Za-z]', '').Length -ge 6 }
-        $loopText = ($blocks -join "`n").Trim()
+        $rawBytes  = [System.IO.File]::ReadAllBytes($loopFile.FullName)
+        $rawText   = [System.Text.Encoding]::UTF8.GetString($rawBytes)
+        $loopLines = $rawText -split "[\r\n]+"
+        $goodLines = @()
+        foreach ($ln in $loopLines) {
+            $trimmed = $ln.Trim()
+            if ($trimmed.Length -ge 10) {
+                $alphaCount = ($trimmed -replace '[^A-Za-z]', '').Length
+                if ($alphaCount -ge 6) { $goodLines += $trimmed }
+            }
+        }
+        $loopText = ($goodLines -join "`n").Trim()
         if ($loopText.Length -gt 100) {
             Write-Host ("  File: " + $loopText.Length + " chars extracted") -ForegroundColor Green
         } else {
-            Write-Host "  File content too sparse — falling back to browser" -ForegroundColor Yellow
+            Write-Host "  File content too sparse - falling back to browser" -ForegroundColor Yellow
             $loopText = $null
         }
     } catch {
@@ -204,7 +209,7 @@ if ($exitCode -ne 0) {
     Write-Host "  Could not find notes for '$meetingTitle'." -ForegroundColor Yellow
     Write-Host "  Options:" -ForegroundColor Yellow
     Write-Host "    1. Open the Loop page -> Ctrl+A -> Ctrl+C -> re-run" -ForegroundColor Yellow
-    Write-Host "    2. Or use: meeting-agent from-loop --file <path-to-.loop-file>" -ForegroundColor Yellow
+    Write-Host "    2. Or use: meeting-agent from-loop --file [path-to-.loop-file]" -ForegroundColor Yellow
     exit 0
 }
 
