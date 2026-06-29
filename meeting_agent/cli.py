@@ -250,6 +250,78 @@ def auth_login(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+@app.command(name="fetch-notes")
+def fetch_notes(
+    title: str = typer.Option(..., "--title", "-t", help="Meeting title"),
+    facilitator: Optional[str] = typer.Option(None, "--facilitator", "-f", help="Facilitator email address to filter by"),
+    keyword: Optional[str] = typer.Option(None, "--keyword", "-k", help="Subject keyword to filter by (e.g. 'meeting notes')"),
+    lookback: int = typer.Option(24, "--lookback", help="Hours to look back in inbox (default 24)"),
+    config: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Fetch facilitator notes from Outlook inbox and process automatically."""
+    from meeting_agent.integrations.outlook_com import OutlookCOMClient
+
+    settings = load_settings(config)
+    outlook = OutlookCOMClient()
+
+    console.print(f"\n[cyan]Searching Outlook inbox (last {lookback}h)...[/cyan]")
+    email = outlook.fetch_facilitator_notes(
+        sender_email=facilitator,
+        subject_keyword=keyword,
+        lookback_hours=lookback,
+    )
+
+    if not email:
+        console.print("[red]No matching email found. Try --facilitator or --keyword to narrow the search.[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Found:[/green] '{email['subject']}' from {email['sender']} at {email['received_time']}")
+
+    # Write body to a temp file and process
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tmp:
+        tmp.write(email["body"])
+        tmp_path = tmp.name
+
+    try:
+        from meeting_agent.engines.ingestion import MeetingIngestionEngine
+        from meeting_agent.engines.extraction import ActionExtractionEngine
+        from meeting_agent.engines.ownership import OwnershipEngine
+        from meeting_agent.engines.followup import FollowUpEngine
+        from meeting_agent.engines.email_generation import EmailGenerationEngine
+        from meeting_agent.engines.task_management import TaskManagementEngine
+        from meeting_agent.engines.governance import GovernanceEngine
+        from meeting_agent.engines.documentation import DocumentationEngine
+        from datetime import datetime as dt
+        import uuid
+
+        mid = str(uuid.uuid4())[:8]
+        date_str = email["received_time"].isoformat()
+
+        ingestion   = MeetingIngestionEngine(settings, graph_client=outlook)
+        extraction  = ActionExtractionEngine(settings)
+        ownership   = OwnershipEngine(settings)
+        followup    = FollowUpEngine(settings)
+        email_gen   = EmailGenerationEngine(settings, graph_client=outlook)
+        task_engine = TaskManagementEngine(settings)
+        governance  = GovernanceEngine()
+        doc_engine  = DocumentationEngine(settings, task_engine)
+
+        context = ingestion.ingest_from_files(
+            meeting_id=mid, title=title, date_str=date_str, notes_path=tmp_path,
+        )
+        actions = extraction.extract(context)
+        ownership.resolve(actions, context)
+        plans   = followup.build_plans(actions, context)
+        emails  = email_gen.generate(actions, plans, context)
+        tasks   = [task_engine.upsert_from_action(a, mid) for a in actions]
+        summary = doc_engine.generate_meeting_summary(context, tasks)
+        _print_result({"meeting_id": mid, "tasks": tasks, "emails": emails,
+                       "meeting_requests": [], "summary": summary})
+    finally:
+        os.unlink(tmp_path)
+
+
 def _print_result(result: dict) -> None:
     mid = result.get("meeting_id", "")[:12]
     tasks = result.get("tasks", [])

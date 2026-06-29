@@ -172,6 +172,62 @@ class OutlookCOMClient:
 
     # ── Stubs matching GraphClient interface ──────────────────────────────────
 
+
+    # ── Facilitator notes from inbox ──────────────────────────────────────────
+
+    def fetch_facilitator_notes(
+        self,
+        sender_email: Optional[str] = None,
+        subject_keyword: Optional[str] = None,
+        lookback_hours: int = 24,
+    ) -> Optional[dict]:
+        """Search Outlook inbox for a facilitator notes email.
+
+        Scans emails received within lookback_hours, optionally filtered by
+        sender_email and/or subject_keyword (case-insensitive).
+        Returns dict(subject, sender, body, received_time) or None.
+        """
+        inbox = self._ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+        items = inbox.Items
+        items.Sort("[ReceivedTime]", True)  # newest first
+        cutoff = datetime.now() - timedelta(hours=lookback_hours)
+
+        for item in items:
+            try:
+                received = item.ReceivedTime
+                received_dt = datetime(
+                    received.year, received.month, received.day,
+                    received.hour, received.minute, received.second,
+                )
+                if received_dt < cutoff:
+                    break
+                if sender_email and sender_email.lower() not in (
+                    getattr(item, "SenderEmailAddress", "") or ""
+                ).lower():
+                    continue
+                subject = getattr(item, "Subject", "") or ""
+                if subject_keyword and subject_keyword.lower() not in subject.lower():
+                    continue
+                body = getattr(item, "Body", "") or ""
+                logger.info(
+                    "COM: found facilitator notes email '%s' from %s at %s",
+                    subject, item.SenderName, received_dt,
+                )
+                return {
+                    "subject":       subject,
+                    "sender":        item.SenderName,
+                    "body":          body,
+                    "received_time": received_dt,
+                }
+            except Exception:
+                continue
+
+        logger.warning(
+            "COM: no notes email found in last %dh (sender=%s keyword=%s)",
+            lookback_hours, sender_email, subject_keyword,
+        )
+        return None
+
     def get_transcript(self, meeting_id: str) -> Optional[str]:
         logger.debug("COM: transcript not available via local Outlook — use --from-file")
         return None
