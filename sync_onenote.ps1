@@ -117,33 +117,57 @@ if ($loopFile) {
         if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
         $edgeProc = Start-Process $edgeExe -ArgumentList "--new-window `"$loopUrl`"" -PassThru
 
-        Write-Host "  Waiting 12s for Loop to render..." -ForegroundColor Gray
-        Start-Sleep -Seconds 12
+        Write-Host "  Waiting 25s for Loop SPA to render..." -ForegroundColor Gray
+        Start-Sleep -Seconds 25
 
-        # Bring Edge to foreground and auto-capture all text
+        # Win32 helpers for window focus + mouse click
         Add-Type -TypeDefinition @"
-using System.Runtime.InteropServices;
-public class WinFocus { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h); }
+using System; using System.Runtime.InteropServices;
+public class WinHelper {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
+    public static void Click(int x, int y) {
+        SetCursorPos(x, y);
+        mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(150);
+        mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+    }
+}
 "@ -ErrorAction SilentlyContinue
 
+        # Bring newest Edge window to foreground
         $hwnd = (Get-Process msedge -ErrorAction SilentlyContinue |
             Where-Object { $_.MainWindowTitle -ne "" } |
             Sort-Object StartTime -Descending | Select-Object -First 1).MainWindowHandle
-        if ($hwnd) { [WinFocus]::SetForegroundWindow($hwnd) | Out-Null }
-        Start-Sleep -Milliseconds 500
+        if ($hwnd) { [WinHelper]::SetForegroundWindow($hwnd) | Out-Null }
+        Start-Sleep -Milliseconds 800
 
+        # Click center of screen to move focus from URL bar into Loop content
         Add-Type -AssemblyName System.Windows.Forms
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+        [WinHelper]::Click([int]($screen.Bounds.Width/2), [int]($screen.Bounds.Height/2))
+        Start-Sleep -Milliseconds 700
+
+        # Ctrl+A twice: 1st selects current block, 2nd selects ALL blocks in Loop
         [System.Windows.Forms.Clipboard]::Clear()
-        [System.Windows.Forms.SendKeys]::SendWait("^a")   # Select all Loop content
+        [System.Windows.Forms.SendKeys]::SendWait("^a")
         Start-Sleep -Milliseconds 700
-        [System.Windows.Forms.SendKeys]::SendWait("^c")   # Copy
+        [System.Windows.Forms.SendKeys]::SendWait("^a")
         Start-Sleep -Milliseconds 700
+        [System.Windows.Forms.SendKeys]::SendWait("^c")
+        Start-Sleep -Milliseconds 800
 
         $loopText = [System.Windows.Forms.Clipboard]::GetText()
 
+        Write-Host ("  Clipboard : " + $loopText.Length + " chars") -ForegroundColor Gray
+        if ($loopText.Length -gt 0) {
+            $preview = ($loopText.Substring(0, [Math]::Min(200, $loopText.Length)) -replace "`r`n", " ")
+            Write-Host ("  Preview   : " + $preview) -ForegroundColor DarkGray
+        }
+
         if ($loopText -and $loopText.Trim().Length -gt 50) {
-            Write-Host ("  Captured " + $loopText.Length + " chars from Loop page") -ForegroundColor Green
-            # Feed captured text to agent via stdin temp file
+            Write-Host ("  Captured " + $loopText.Length + " chars from Loop") -ForegroundColor Green
             [System.IO.File]::WriteAllText("$env:TEMP\loop_capture.txt", $loopText, [System.Text.Encoding]::UTF8)
             Push-Location $SCRIPT_DIR
             & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_capture.txt" --title $meetingTitle
