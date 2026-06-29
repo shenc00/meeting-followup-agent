@@ -64,7 +64,7 @@ if (-not (Test-Path $VENV_PYTHON)) {
 }
 
 $env:OPENAI_API_KEY = [System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "User")
-$beforeRun = (Get-Date).AddSeconds(-5)
+$beforeRun = (Get-Date).AddMinutes(-3)
 $exitCode  = 1
 
 # Attempt 1: Loop via Graph API (Files.Read.All -- no admin consent needed)
@@ -129,16 +129,16 @@ $db        = Get-Content $DB_PATH -Raw -Encoding UTF8 | ConvertFrom-Json
 $tasksList = @()
 $db.tasks.PSObject.Properties | ForEach-Object { $tasksList += $_.Value }
 
-$tasks = $tasksList | Where-Object {
+$tasks = @($tasksList | Where-Object {
     try { ([datetime]$_.created_at) -gt $beforeRun } catch { $false }
-}
+})
 
 if ($tasks.Count -eq 0) {
     Write-Host "  No new tasks were extracted from this meeting." -ForegroundColor Yellow
     exit 0
 }
 
-try { $meetingDate = [datetime]($tasks[0].created_at) } catch { $meetingDate = Get-Date }
+try { $meetingDate = [datetime]($tasks | Select-Object -First 1).created_at } catch { $meetingDate = Get-Date }
 Write-Host ("  New tasks : " + $tasks.Count) -ForegroundColor White
 
 try {
