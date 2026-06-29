@@ -109,7 +109,7 @@ if ($loopFile) {
     if ($spBase) {
         $relPath = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
         # Use ?Web=1 to force SharePoint to render the file in browser (not download)
-        $loopWebUrl = $loopUrl + "?Web=1"
+        $loopWebUrl = $spBase + "/" + $relPath + "?Web=1"
         Write-Host "  [a] Opening Loop in browser (no download, no auth needed)..." -ForegroundColor Green
         Write-Host ("  URL : " + $loopWebUrl) -ForegroundColor DarkGray
 
