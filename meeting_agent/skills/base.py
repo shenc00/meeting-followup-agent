@@ -59,13 +59,26 @@ class BaseSkill(ABC):
             max_tokens=self.settings.llm.max_tokens,
         )
         raw = response.choices[0].message.content or ""
+        logger.info("[%s] LLM response (%d chars): %s", self.__class__.__name__, len(raw), raw[:300])
         return self._parse_response(raw)
 
     @staticmethod
     def _extract_json(text: str) -> Any:
-        """Strip markdown fences then parse JSON."""
+        """Strip markdown fences then parse JSON; fall back to regex extraction."""
+        import re
         cleaned = text.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[-1]
-            cleaned = cleaned.rsplit("```", 1)[0]
-        return json.loads(cleaned)
+            cleaned = cleaned.rsplit("```", 1)[0].strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to find a JSON array embedded in free-form text
+            m = re.search(r'\[[\s\S]*\]', cleaned)
+            if m:
+                try:
+                    return json.loads(m.group())
+                except json.JSONDecodeError:
+                    pass
+            logger.warning("JSON parse failed. Raw response: %s", cleaned[:400])
+            return []

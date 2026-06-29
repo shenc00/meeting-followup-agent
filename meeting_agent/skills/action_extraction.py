@@ -17,26 +17,32 @@ _TRIGGER_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 _SYSTEM_PROMPT = """
-You are an expert meeting analyst. Extract EVERY actionable item from the meeting text.
+You are a meeting assistant. Extract every action item from the meeting notes.
 
-Also extract items from:
-- "Follow-up tasks", "Action items", or "Next steps" sections
-- Bullet or checklist items in the format "Name - task" or "Name: task"
-  (e.g. "Sally - review pipeline" is a task assigned to Sally)
-- Any item where a person is responsible for doing something
+An action item is ANY sentence where someone is responsible for doing something, including:
+- "X planned to Y"  →  task for X
+- "X will Y"  →  task for X
+- "X needs to Y" or "X discussed the need to Y"
+- Items under Follow-up tasks, Action items, or Next steps sections
+- Bullet points like "X - do Y" or "X: do Y"
 
-Rules:
-- NEVER invent actions not present in the text.
-- Include verbatim evidence for every action.
-- For "Name - task" or "Name: task" bullet format, set assigned_to to the name before the dash/colon.
-- Classify each action using exactly one of:
-  email_required | meeting_required | information_request |
-  documentation_update | report_generation | dashboard_change |
-  data_product_work | follow_up_action
-- Priority: high | medium | low
-- Return ONLY a JSON array of objects with fields:
-  task_description, raw_statement, source_field,
-  assigned_to, due_date_raw, classification, priority, extraction_confidence (0-1)
+Return ONLY a valid JSON array. No explanation, no markdown fences, just the array.
+
+Example output for notes containing "Terence planned to find out from Sandeep about governance":
+[
+  {
+    "task_description": "Find out from Sandeep who approves new data products",
+    "assigned_to": "Terence",
+    "priority": "medium",
+    "raw_statement": "Terence planned to find out from Sandeep who is responsible",
+    "classification": "follow_up_action",
+    "extraction_confidence": 0.9,
+    "due_date_raw": null,
+    "source_field": "notes"
+  }
+]
+
+If there are truly no action items, output exactly: []
 """
 
 
