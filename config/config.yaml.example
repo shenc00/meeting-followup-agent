@@ -1,7 +1,7 @@
 # ── Identity ──────────────────────────────────────────────────────────────────
 primary_user:
   name: "Sally"                         # Display name used in meeting content
-  email: "sally@example.com"            # Your Microsoft 365 email
+  email: "sally@bd.com"            # Your Microsoft 365 email
 
 # ── Microsoft Graph / Azure AD ────────────────────────────────────────────────
 graph:
@@ -19,12 +19,17 @@ graph:
 
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 llm:
-  provider: "azure_openai"             # "azure_openai" or "openai"
+  provider: "openai"                   # "azure_openai" or "openai"
   model: "gpt-4o"
-  api_key: "YOUR_OPENAI_KEY"           # Use env var OPENAI_API_KEY instead
-  azure_endpoint: "https://YOUR_RESOURCE.openai.azure.com/"
-  azure_api_version: "2024-02-01"
-  azure_deployment: "gpt-4o"
+  api_key: ""                          # Set env var OPENAI_API_KEY=<your_github_token>
+  base_url: "https://models.inference.ai.azure.com"  # GitHub Models API endpoint
+
+  # ── Azure OpenAI alternative (uncomment and fill if using Azure) ────────────
+  # provider: "azure_openai"
+  # azure_endpoint: "https://YOUR_RESOURCE.openai.azure.com/"
+  # azure_api_version: "2024-02-01"
+  # azure_deployment: "gpt-4o"
+
   temperature: 0.1                     # Low temperature for deterministic extraction
   max_tokens: 4096
 
