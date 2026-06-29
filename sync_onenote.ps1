@@ -1,5 +1,7 @@
 #Requires -Version 5.1
-param()
+param(
+    [string]$MeetingTitle = ""   # If passed by watcher, skips Outlook/manual prompt
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -20,6 +22,12 @@ Write-Host ""
 # --- STEP 1: Get latest meeting name from Outlook Calendar ---
 
 Write-Host "[1/3] Reading Outlook Calendar for latest meeting..." -ForegroundColor Yellow
+
+# If called by watcher with a known title, skip calendar lookup
+if ($MeetingTitle -and $MeetingTitle.Trim() -ne "") {
+    $meetingTitle = $MeetingTitle.Trim()
+    Write-Host ("  Title provided by watcher: '" + $meetingTitle + "'") -ForegroundColor Green
+} else {
 
 $meetingTitle = $null
 try {
@@ -45,6 +53,8 @@ try {
 } catch {
     Write-Host ("  WARNING: Could not read Outlook Calendar -- " + $_.Exception.Message) -ForegroundColor DarkYellow
 }
+
+}  # end else (watcher title bypass)
 
 if (-not $meetingTitle) {
     Write-Host "  No recent meeting found in last 24h. Enter meeting title:" -ForegroundColor Yellow
