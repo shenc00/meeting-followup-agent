@@ -197,7 +197,7 @@ if ($loopFile) {
 
             # Sanity check: reject if content looks like code, not meeting notes
             if ($captured -match '%md|%run |SELECT |CREATE TABLE|import pandas|import pyspark') {
-                Write-Host "  Content looks like code — wrong window captured, skipping" -ForegroundColor Yellow
+                Write-Host "  Content looks like code - wrong window captured, skipping" -ForegroundColor Yellow
                 $captured = $null
             }
 
