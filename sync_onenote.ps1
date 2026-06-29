@@ -118,44 +118,14 @@ if ($loopFile) {
         if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
         Start-Process $edgeExe -ArgumentList "--new-window `"$loopWebUrl`""
 
-        # Wait for Loop SPA to fully render (Loop needs 25-40s on first load)
-        Write-Host "  Waiting 35s for Loop to render (watch browser)..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 35
-
-        # Win32 helpers for window focus + mouse click
-        Add-Type -TypeDefinition @"
-using System; using System.Runtime.InteropServices;
-public class WinHelper3 {
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
-    public static void Click(int x, int y) {
-        SetCursorPos(x, y); mouse_event(2, 0, 0, 0, UIntPtr.Zero);
-        System.Threading.Thread.Sleep(150); mouse_event(4, 0, 0, 0, UIntPtr.Zero);
-    }
-}
-"@ -ErrorAction SilentlyContinue
-
-        # Focus Edge and click content area
-        $hwnd = (Get-Process msedge -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -ne "" } |
-            Sort-Object StartTime -Descending | Select-Object -First 1).MainWindowHandle
-        if ($hwnd) { [WinHelper3]::SetForegroundWindow($hwnd) | Out-Null }
-        Start-Sleep -Milliseconds 800
-
         Add-Type -AssemblyName System.Windows.Forms
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-        [WinHelper3]::Click([int]($screen.Bounds.Width/2), [int]($screen.Bounds.Height/2))
-        Start-Sleep -Milliseconds 700
-
-        # Ctrl+A twice + Ctrl+C
-        [System.Windows.Forms.Clipboard]::Clear()
-        [System.Windows.Forms.SendKeys]::SendWait("^a")
-        Start-Sleep -Milliseconds 700
-        [System.Windows.Forms.SendKeys]::SendWait("^a")
-        Start-Sleep -Milliseconds 700
-        [System.Windows.Forms.SendKeys]::SendWait("^c")
-        Start-Sleep -Milliseconds 800
+        Write-Host ""
+        Write-Host "  Loop page opened in Edge. Once it has fully loaded:" -ForegroundColor Cyan
+        Write-Host "    1. Click anywhere inside the Loop page content" -ForegroundColor Cyan
+        Write-Host "    2. Press Ctrl+A  (select all text)" -ForegroundColor Cyan
+        Write-Host "    3. Press Ctrl+C  (copy)" -ForegroundColor Cyan
+        Write-Host ""
+        Read-Host "  Press Enter here once you have copied the content"
 
         $loopText = [System.Windows.Forms.Clipboard]::GetText()
         Write-Host ("  Clipboard : " + $loopText.Length + " chars") -ForegroundColor Gray
