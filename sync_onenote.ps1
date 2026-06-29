@@ -142,19 +142,56 @@ if ($loopFile) {
             Write-Host ("  URL : " + $loopWebUrl) -ForegroundColor DarkGray
             $edgeExe = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
             if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
+
+            # Record existing Edge PIDs so we can identify the new window after launch
+            $preLaunchPids = @(Get-Process msedge -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Id)
+
             Start-Process $edgeExe -ArgumentList "--new-window `"$loopWebUrl`""
             Write-Host "  Waiting 30s for Loop to render..." -ForegroundColor Yellow
             Start-Sleep -Seconds 30
+
             $wshell = New-Object -ComObject WScript.Shell
-            $wshell.AppActivate("Microsoft Edge") | Out-Null
+
+            # Prefer the Edge window whose title contains the meeting name or "Loop"
+            $keyword = ($meetingTitle -split ' ' | Select-Object -First 3) -join ' '
+            $targetEdge = Get-Process msedge -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowTitle -like "*$keyword*" -or $_.MainWindowTitle -like "*Loop*" } |
+                Sort-Object StartTime -Descending | Select-Object -First 1
+
+            if (-not $targetEdge) {
+                # Fall back: find the Edge window that appeared after launch
+                $targetEdge = Get-Process msedge -ErrorAction SilentlyContinue |
+                    Where-Object { $preLaunchPids -notcontains $_.Id -and $_.MainWindowTitle -ne "" } |
+                    Sort-Object StartTime -Descending | Select-Object -First 1
+            }
+
+            if ($targetEdge) {
+                Write-Host ("  Focusing: " + $targetEdge.MainWindowTitle) -ForegroundColor Gray
+                $wshell.AppActivate($targetEdge.Id) | Out-Null
+            } else {
+                Write-Host "  Could not identify Loop window — using foreground window" -ForegroundColor DarkYellow
+                $wshell.AppActivate("Microsoft Edge") | Out-Null
+            }
+
             Start-Sleep -Milliseconds 1500
             [System.Windows.Forms.Clipboard]::Clear()
             $wshell.SendKeys("^a")
             Start-Sleep -Milliseconds 800
             $wshell.SendKeys("^c")
             Start-Sleep -Milliseconds 1000
-            $loopText = [System.Windows.Forms.Clipboard]::GetText()
-            Write-Host ("  Browser: " + $loopText.Length + " chars") -ForegroundColor Gray
+            $captured = [System.Windows.Forms.Clipboard]::GetText()
+
+            # Sanity check: reject if content looks like code, not meeting notes
+            if ($captured -match '%md|%run |SELECT |CREATE TABLE|import pandas|import pyspark') {
+                Write-Host "  Content looks like code — wrong window captured, skipping" -ForegroundColor Yellow
+                $captured = $null
+            }
+
+            if ($captured) {
+                $loopText = $captured
+                Write-Host ("  Browser: " + $loopText.Length + " chars") -ForegroundColor Gray
+            }
         }
     }
 
