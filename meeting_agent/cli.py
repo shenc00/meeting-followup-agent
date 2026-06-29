@@ -253,43 +253,54 @@ def auth_login(
 @app.command(name="from-loop")
 def from_loop(
     title: Optional[str] = typer.Option(None, "--title", "-t", help="Meeting title to search for (partial match)"),
+    file: Optional[str] = typer.Option(None, "--file", help="Path to a local .loop file (no auth needed — reads directly from OneDrive sync folder)"),
     config: Optional[str] = typer.Option(None, "--config"),
 ) -> None:
-    """Fetch the latest Loop meeting notes from OneDrive/SharePoint via Graph API and extract action items.
+    """Fetch Loop meeting notes and extract action items.
 
-    Requires Files.Read.All scope in config.yaml and a valid Graph token.
-    Run 'meeting-agent auth' once to authenticate.
+    Two modes:
+      --file PATH   Read a .loop file directly from the local OneDrive folder (no auth needed).
+      --title TEXT  Search OneDrive/SharePoint via Graph API (requires 'meeting-agent auth').
     """
     from meeting_agent.integrations.loop_fetcher import LoopFetcher
     from datetime import datetime as dt
-    import uuid
+    import uuid, tempfile, os
 
     settings = load_settings(config)
 
-    if not settings.graph.tenant_id or not settings.graph.client_id:
-        console.print("[red]graph.tenant_id and graph.client_id must be set in config.yaml[/red]")
-        raise typer.Exit(1)
+    notes_text: Optional[str] = None
+    page_title: Optional[str] = None
 
-    console.print(f"\n[cyan]Searching Loop for{'  ' + title if title else ' latest'} meeting notes...[/cyan]")
+    if file:
+        # ── Local file mode — no auth required ───────────────────────────────
+        if not os.path.exists(file):
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+        console.print(f"\n[cyan]Reading local Loop file: {file}[/cyan]")
+        page_title  = os.path.splitext(os.path.basename(file))[0]
+        notes_text  = LoopFetcher.extract_from_local_file(file)
+    else:
+        # ── Graph API mode ────────────────────────────────────────────────────
+        if not settings.graph.tenant_id or not settings.graph.client_id:
+            console.print("[red]graph.tenant_id and graph.client_id must be set in config.yaml[/red]")
+            raise typer.Exit(1)
+        console.print(f"\n[cyan]Searching Loop via Graph API for: {title or 'latest'}...[/cyan]")
+        fetcher = LoopFetcher(
+            tenant_id=settings.graph.tenant_id,
+            client_id=settings.graph.client_id,
+            scopes=settings.graph.scopes,
+            cache_path=settings.graph.token_cache_path,
+        )
+        page_title, notes_text = fetcher.fetch_latest(title)
 
-    fetcher = LoopFetcher(
-        tenant_id=settings.graph.tenant_id,
-        client_id=settings.graph.client_id,
-        scopes=settings.graph.scopes,
-        cache_path=settings.graph.token_cache_path,
-    )
-
-    page_title, notes_text = fetcher.fetch_latest(title)
-
-    if not notes_text:
-        console.print("[red]No Loop notes found. Make sure you have run 'meeting-agent auth' and that Files.Read.All is in your scopes.[/red]")
+    if not notes_text or not notes_text.strip():
+        console.print("[red]No content extracted from Loop notes.[/red]")
         raise typer.Exit(1)
 
     meeting_title = title or page_title or "Meeting"
-    console.print(f"  Found : [bold]{page_title}[/bold] ({len(notes_text)} chars extracted)")
-    console.print(f"\nProcessing [bold]{meeting_title}[/bold] from Loop notes...")
+    console.print(f"  Page  : [bold]{page_title}[/bold] ({len(notes_text)} chars)")
+    console.print(f"\nProcessing [bold]{meeting_title}[/bold]...")
 
-    import tempfile, os
     from meeting_agent.engines.ingestion import MeetingIngestionEngine
     from meeting_agent.engines.extraction import ActionExtractionEngine
     from meeting_agent.engines.ownership import OwnershipEngine
@@ -306,7 +317,6 @@ def from_loop(
     try:
         mid      = str(uuid.uuid4())[:8]
         date_str = dt.now().isoformat()
-
         ingestion   = MeetingIngestionEngine(settings)
         extraction  = ActionExtractionEngine(settings)
         ownership   = OwnershipEngine(settings)
@@ -315,7 +325,6 @@ def from_loop(
         task_engine = TaskManagementEngine(settings)
         governance  = GovernanceEngine()
         doc_engine  = DocumentationEngine(settings, task_engine)
-
         context = ingestion.ingest_from_files(
             meeting_id=mid, title=meeting_title, date_str=date_str, notes_path=tmp_path,
         )

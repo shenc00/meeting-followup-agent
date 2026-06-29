@@ -54,7 +54,7 @@ if (-not $meetingTitle) {
 
 Write-Host ""
 
-# --- STEP 2: Extract notes -- try Loop (Graph API), then clipboard, then Outlook email ---
+# --- STEP 2: Extract notes -- try local OneDrive .loop file, then clipboard, then Outlook email ---
 
 Write-Host "[2/3] Extracting action items from meeting notes..." -ForegroundColor Yellow
 
@@ -67,19 +67,35 @@ $env:OPENAI_API_KEY = [System.Environment]::GetEnvironmentVariable("OPENAI_API_K
 $beforeRun = (Get-Date).AddMinutes(-3)
 $exitCode  = 1
 
-# Attempt 1: Loop via Graph API (Files.Read.All -- no admin consent needed)
-Write-Host "  [a] Trying Loop (Graph API)..." -ForegroundColor Gray
-Push-Location $SCRIPT_DIR
-& $VENV_PYTHON -m meeting_agent.cli from-loop --title $meetingTitle
-$exitCode = $LASTEXITCODE
-Pop-Location
+# Attempt 1: Find .loop file in local OneDrive sync folder (NO auth/admin needed)
+$onedriveRoot = "$env:USERPROFILE\OneDrive - BD"
+if (-not (Test-Path $onedriveRoot)) { $onedriveRoot = "$env:USERPROFILE\OneDrive" }
+
+$loopFile = $null
+if (Test-Path $onedriveRoot) {
+    Write-Host "  [a] Searching OneDrive for .loop file matching '$meetingTitle'..." -ForegroundColor Gray
+    $cutoff = (Get-Date).AddDays(-2)
+    $loopFile = Get-ChildItem -Path $onedriveRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$($meetingTitle.Split(' ')[0])*" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+}
+
+if ($loopFile) {
+    Write-Host ("  Found : " + $loopFile.BaseName) -ForegroundColor Green
+    Write-Host ("  Path  : " + $loopFile.FullName) -ForegroundColor Gray
+    Push-Location $SCRIPT_DIR
+    & $VENV_PYTHON -m meeting_agent.cli from-loop --file $loopFile.FullName --title $meetingTitle
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+}
 
 if ($exitCode -ne 0) {
     # Attempt 2: clipboard (user copied Loop page with Ctrl+A, Ctrl+C)
     Add-Type -AssemblyName System.Windows.Forms
     $clipText = [System.Windows.Forms.Clipboard]::GetText()
     if ($clipText -and $clipText.Trim().Length -gt 50) {
-        Write-Host "  [b] Loop content detected in clipboard -- processing..." -ForegroundColor Gray
+        Write-Host "  [b] Loop content in clipboard -- processing..." -ForegroundColor Gray
         Push-Location $SCRIPT_DIR
         & $VENV_PYTHON -m meeting_agent.cli from-clipboard --title $meetingTitle
         $exitCode = $LASTEXITCODE
@@ -109,8 +125,8 @@ if ($exitCode -ne 0) {
     Write-Host ""
     Write-Host "  Could not find notes for '$meetingTitle'." -ForegroundColor Yellow
     Write-Host "  Options:" -ForegroundColor Yellow
-    Write-Host "    1. Run 'meeting-agent auth' to enable Loop auto-fetch" -ForegroundColor Yellow
-    Write-Host "    2. Open the Loop page -> Ctrl+A -> Ctrl+C -> re-run" -ForegroundColor Yellow
+    Write-Host "    1. Open the Loop page -> Ctrl+A -> Ctrl+C -> re-run" -ForegroundColor Yellow
+    Write-Host "    2. Or use: meeting-agent from-loop --file <path-to-.loop-file>" -ForegroundColor Yellow
     exit 0
 }
 

@@ -69,6 +69,18 @@ class LoopFetcher:
         logger.info("Loop: extracted %d chars from '%s'", len(text), best.get("name"))
         return page_title, text
 
+    # ── Local file extraction (no auth required) ──────────────────────────────
+
+    @classmethod
+    def extract_from_local_file(cls, file_path: str) -> str:
+        """
+        Extract plain text from a .loop file on the local file system.
+        No authentication required — works directly from the OneDrive sync folder.
+        """
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return cls._extract_text(data)
+
     # ── Graph search ──────────────────────────────────────────────────────────
 
     def _search_loop_files(self, token: str, title: Optional[str]) -> list[dict]:
