@@ -10,16 +10,23 @@ _SYSTEM_PROMPT = """
 You are an ownership resolution expert.
 
 Given a list of meeting participants and an action statement, determine:
-- resolved_owner: the person primarily responsible (use exact name from participants list)
+- resolved_owner: the person primarily responsible
 - resolved_email: their email if known
 - ownership_type: assigned_to_me | assigned_to_others | shared | unknown
 - confidence: 0.0–1.0
 - evidence: verbatim phrase showing ownership
 - co_owners: list of additional owners (names only)
-- flagged_for_sally: true if the primary user "Sally" is the owner or co-owner
+- flagged_for_sally: true if the primary user is the owner or co-owner
+
+Rules:
+- If the participants list is not empty, prefer names from it.
+- If the participants list is empty, extract the owner directly from the task description
+  or raw statement (e.g. "Sally - review pipeline" means owner is Sally;
+  "John to complete report" means owner is John).
+- If the primary user's name appears anywhere in the task description or raw statement,
+  set flagged_for_sally to true regardless of whether they appear in the participants list.
 
 Respond ONLY with a single JSON object with exactly these fields.
-Never invent names not present in the participants list.
 """
 
 

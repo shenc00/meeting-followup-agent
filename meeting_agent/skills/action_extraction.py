@@ -17,11 +17,18 @@ _TRIGGER_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 _SYSTEM_PROMPT = """
-You are an expert meeting analyst. Extract every actionable item from the meeting text.
+You are an expert meeting analyst. Extract EVERY actionable item from the meeting text.
+
+Also extract items from:
+- "Follow-up tasks", "Action items", or "Next steps" sections
+- Bullet or checklist items in the format "Name - task" or "Name: task"
+  (e.g. "Sally - review pipeline" is a task assigned to Sally)
+- Any item where a person is responsible for doing something
 
 Rules:
 - NEVER invent actions not present in the text.
 - Include verbatim evidence for every action.
+- For "Name - task" or "Name: task" bullet format, set assigned_to to the name before the dash/colon.
 - Classify each action using exactly one of:
   email_required | meeting_required | information_request |
   documentation_update | report_generation | dashboard_change |

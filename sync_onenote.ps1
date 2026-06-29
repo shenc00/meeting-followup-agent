@@ -102,50 +102,69 @@ if (Test-Path $searchRoot) {
 
 if ($loopFile) {
     Write-Host ("  Found : " + $loopFile.BaseName) -ForegroundColor Green
-    $odReg    = Get-ItemProperty "HKCU:\Software\Microsoft\OneDrive\Accounts\Business1" -ErrorAction SilentlyContinue
-    $spBase   = if ($odReg) { $odReg.ServiceEndpointUri -replace "/_api$", "" } else { "" }
-    $odFolder = if ($odReg) { $odReg.UserFolder } else { $onedriveRoot }
+    Add-Type -AssemblyName System.Windows.Forms
 
-    if ($spBase) {
-        $relPath = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
-        # OneDrive for Business syncs to the SharePoint Documents library,
-        # so the relative path must be prefixed with /Documents/
-        $loopWebUrl = $spBase + "/Documents/" + $relPath + "?Web=1"
-        Write-Host "  [a] Opening Loop in browser (no download, no auth needed)..." -ForegroundColor Green
-        Write-Host ("  URL : " + $loopWebUrl) -ForegroundColor DarkGray
-
-        $edgeExe = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-        if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
-        Start-Process $edgeExe -ArgumentList "--new-window `"$loopWebUrl`""
-
-        Add-Type -AssemblyName System.Windows.Forms
-        Write-Host ""
-        Write-Host "  Loop page opened in Edge. Once it has fully loaded:" -ForegroundColor Cyan
-        Write-Host "    1. Click anywhere inside the Loop page content" -ForegroundColor Cyan
-        Write-Host "    2. Press Ctrl+A  (select all text)" -ForegroundColor Cyan
-        Write-Host "    3. Press Ctrl+C  (copy)" -ForegroundColor Cyan
-        Write-Host ""
-        Read-Host "  Press Enter here once you have copied the content"
-
-        $loopText = [System.Windows.Forms.Clipboard]::GetText()
-        Write-Host ("  Clipboard : " + $loopText.Length + " chars") -ForegroundColor Gray
-        if ($loopText.Length -gt 0) {
-            $preview = ($loopText.Substring(0, [Math]::Min(300, $loopText.Length)) -replace "`r`n", " ")
-            Write-Host ("  Preview   : " + $preview) -ForegroundColor DarkGray
-        }
-
-        if ($loopText -and $loopText.Trim().Length -gt 50) {
-            Write-Host ("  Captured " + $loopText.Length + " chars -- processing...") -ForegroundColor Green
-            [System.IO.File]::WriteAllText("$env:TEMP\loop_cap.txt", $loopText, [System.Text.Encoding]::UTF8)
-            Push-Location $SCRIPT_DIR
-            & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_cap.txt" --title $meetingTitle
-            $exitCode = $LASTEXITCODE
-            Write-Host ("  Agent exit code: " + $exitCode) -ForegroundColor Gray
-            Pop-Location
-            Remove-Item "$env:TEMP\loop_cap.txt" -ErrorAction SilentlyContinue
+    # --- Strategy A: Read .loop bytes directly — no browser, no manual steps ---
+    $loopText = $null
+    Write-Host "  Reading .loop file from disk..." -ForegroundColor Gray
+    try {
+        $rawBytes = [System.IO.File]::ReadAllBytes($loopFile.FullName)
+        $rawText  = [System.Text.Encoding]::UTF8.GetString($rawBytes)
+        # Extract readable sequences: starts with a letter, 10+ printable chars
+        $blocks   = [regex]::Matches($rawText, '[A-Za-z][A-Za-z0-9 .,!?:;()\-]{9,}') |
+            ForEach-Object { $_.Value.Trim() } |
+            Where-Object { ($_ -replace '[^A-Za-z]', '').Length -ge 6 }
+        $loopText = ($blocks -join "`n").Trim()
+        if ($loopText.Length -gt 100) {
+            Write-Host ("  File: " + $loopText.Length + " chars extracted") -ForegroundColor Green
         } else {
-            Write-Host "  Loop content not captured (may need more load time)" -ForegroundColor Yellow
+            Write-Host "  File content too sparse — falling back to browser" -ForegroundColor Yellow
+            $loopText = $null
         }
+    } catch {
+        Write-Host ("  File read error: " + $_.Exception.Message) -ForegroundColor DarkYellow
+    }
+
+    # --- Strategy B: Open browser + WScript automated Ctrl+A/Ctrl+C (no user prompt) ---
+    if (-not $loopText) {
+        $odReg    = Get-ItemProperty "HKCU:\Software\Microsoft\OneDrive\Accounts\Business1" -ErrorAction SilentlyContinue
+        $spBase   = if ($odReg) { $odReg.ServiceEndpointUri -replace "/_api$", "" } else { "" }
+        $odFolder = if ($odReg) { $odReg.UserFolder } else { $onedriveRoot }
+        if ($spBase) {
+            $relPath    = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
+            $loopWebUrl = $spBase + "/Documents/" + $relPath + "?Web=1"
+            Write-Host ("  URL : " + $loopWebUrl) -ForegroundColor DarkGray
+            $edgeExe = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+            if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
+            Start-Process $edgeExe -ArgumentList "--new-window `"$loopWebUrl`""
+            Write-Host "  Waiting 30s for Loop to render..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 30
+            $wshell = New-Object -ComObject WScript.Shell
+            $wshell.AppActivate("Microsoft Edge") | Out-Null
+            Start-Sleep -Milliseconds 1500
+            [System.Windows.Forms.Clipboard]::Clear()
+            $wshell.SendKeys("^a")
+            Start-Sleep -Milliseconds 800
+            $wshell.SendKeys("^c")
+            Start-Sleep -Milliseconds 1000
+            $loopText = [System.Windows.Forms.Clipboard]::GetText()
+            Write-Host ("  Browser: " + $loopText.Length + " chars") -ForegroundColor Gray
+        }
+    }
+
+    if ($loopText -and $loopText.Trim().Length -gt 50) {
+        $preview = $loopText.Substring(0, [Math]::Min(200, $loopText.Length)) -replace "`r`n", " "
+        Write-Host ("  Preview : " + $preview) -ForegroundColor DarkGray
+        Write-Host ("  Processing " + $loopText.Length + " chars...") -ForegroundColor Green
+        [System.IO.File]::WriteAllText("$env:TEMP\loop_cap.txt", $loopText, [System.Text.Encoding]::UTF8)
+        Push-Location $SCRIPT_DIR
+        & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_cap.txt" --title $meetingTitle
+        $exitCode = $LASTEXITCODE
+        Write-Host ("  Agent exit code: " + $exitCode) -ForegroundColor Gray
+        Pop-Location
+        Remove-Item "$env:TEMP\loop_cap.txt" -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "  Could not extract Loop content from file or browser" -ForegroundColor Yellow
     }
 }
 
