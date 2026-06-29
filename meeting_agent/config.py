@@ -33,6 +33,7 @@ class LLMConfig(BaseModel):
     provider: str = "azure_openai"
     model: str = "gpt-4o"
     api_key: str = ""
+    base_url: str = ""              # custom base URL, e.g. GitHub Models endpoint
     azure_endpoint: str = ""
     azure_api_version: str = "2024-02-01"
     azure_deployment: str = "gpt-4o"

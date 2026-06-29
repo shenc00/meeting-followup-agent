@@ -32,7 +32,7 @@ class BaseSkill(ABC):
                 azure_endpoint=cfg.azure_endpoint,
                 api_version=cfg.azure_api_version,
             )
-        return OpenAI(api_key=cfg.api_key)
+        return OpenAI(api_key=cfg.api_key, base_url=cfg.base_url or None)
 
     @property
     def _model(self) -> str:
