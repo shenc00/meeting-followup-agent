@@ -155,15 +155,13 @@ class LoopFetcher:
         """
         Extract readable text from a Fluid Framework .loop binary.
 
-        The Fluid / SharePoint Embedded format stores string operations
-        inline. We scan for:
-          1. Runs of printable UTF-8 bytes (>= 12 chars)
-          2. Runs of printable UTF-16-LE chars (>= 12 chars)
-        then deduplicate and join by newline.
+        Scans for runs of printable ASCII / UTF-16-LE strings then filters
+        out DRM metadata, base64, GUIDs, URLs and other noise so only
+        human-readable meeting content remains.
         """
         results: list[str] = []
 
-        # --- UTF-8 printable runs ---
+        # --- UTF-8 / ASCII printable runs ---
         for m in re.findall(rb'[\x20-\x7E\t\n\r]{12,}', data):
             try:
                 s = m.decode("utf-8").strip()
@@ -224,9 +222,16 @@ class LoopFetcher:
 
 
 def _looks_like_metadata(s: str) -> bool:
-    """Filter out base64, GUIDs, URLs, and JSON-like noise."""
-    if re.fullmatch(r'[A-Za-z0-9+/=]{20,}', s):       return True   # base64
-    if re.fullmatch(r'[0-9a-fA-F\-]{32,}', s):         return True   # GUID/hash
-    if s.startswith(("http", "{", "[", "\\", "data:")):return True   # URL / JSON
-    if re.search(r'[^\x20-\x7E\s]', s):                return True   # non-ASCII
+    """Filter out base64, GUIDs, URLs, XML/DRM noise, and binary garbage."""
+    if re.fullmatch(r'[A-Za-z0-9+/=]{20,}', s):          return True   # base64
+    if re.fullmatch(r'[0-9a-fA-F\-]{32,}', s):           return True   # GUID/hash
+    if s.startswith(("http", "{", "[", "\\", "data:")):  return True   # URL/JSON
+    if re.search(r'[^\x20-\x7E\s]', s):                  return True   # non-ASCII
+    # XML / DRM specific patterns
+    if re.search(r'<[A-Z][A-Z]+[ />]|XrML|PUBLICKEY|ALGORITHM|ISSUEDTIME'
+                 r'|encoding=|xmlns|DESCRIPTOR|aadrm\.com|\.svc\.ms', s):
+        return True
+    # Very long lines with no spaces are likely binary/base64
+    words = s.split()
+    if len(words) == 1 and len(s) > 40:                  return True
     return False

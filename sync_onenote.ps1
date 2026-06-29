@@ -109,73 +109,94 @@ if ($loopFile) {
     if ($spBase) {
         $relPath = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
         $loopUrl = ($spBase + "/Documents/" + $relPath) -replace ' ', '%20'
-        Write-Host "  [a] Opening Loop in Edge (no auth needed)..." -ForegroundColor Green
-        Write-Host ("  URL : " + $loopUrl) -ForegroundColor DarkGray
+        Write-Host "  [a] Opening Loop in browser via file handler (no auth needed)..." -ForegroundColor Green
 
-        # Open Edge with the Loop SharePoint URL (user already signed in to Edge)
+        # Step 1: Download the .loop file via Edge to get a local decryptable copy
         $edgeExe = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
         if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
-        $edgeProc = Start-Process $edgeExe -ArgumentList "--new-window `"$loopUrl`"" -PassThru
+        $downloadPath = Join-Path "$env:USERPROFILE\Downloads" $loopFile.Name
+        # Remove stale download if present
+        Remove-Item $downloadPath -ErrorAction SilentlyContinue
 
-        Write-Host "  Waiting 25s for Loop SPA to render..." -ForegroundColor Gray
-        Start-Sleep -Seconds 25
+        Write-Host ("  URL : " + $loopUrl) -ForegroundColor DarkGray
+        Start-Process $edgeExe -ArgumentList "--new-window `"$loopUrl`""
 
-        # Win32 helpers for window focus + mouse click
-        Add-Type -TypeDefinition @"
+        # Wait for download (up to 40 seconds)
+        $waited = 0
+        Write-Host "  Waiting for .loop file to download..." -ForegroundColor Gray
+        while ($waited -lt 40) {
+            if ((Test-Path $downloadPath) -and (Get-Item $downloadPath).Length -gt 10000) { break }
+            Start-Sleep -Seconds 1 ; $waited++
+        }
+
+        # Step 2: Open the downloaded file -- Windows file handler opens Loop in browser
+        if ((Test-Path $downloadPath) -and (Get-Item $downloadPath).Length -gt 10000) {
+            Write-Host ("  Download complete (" + (Get-Item $downloadPath).Length + " bytes). Opening in Loop...") -ForegroundColor Green
+            Start-Process $downloadPath   # Opens Loop web app in browser (already signed in)
+
+            # Step 3: Wait for Loop SPA to render, then auto-capture
+            Write-Host "  Waiting 25s for Loop to render..." -ForegroundColor Gray
+            Start-Sleep -Seconds 25
+
+            # Win32 helpers
+            Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
-public class WinHelper {
+public class WinHelper2 {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
     public static void Click(int x, int y) {
-        SetCursorPos(x, y);
-        mouse_event(2, 0, 0, 0, UIntPtr.Zero);
-        System.Threading.Thread.Sleep(150);
-        mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+        SetCursorPos(x, y); mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(150); mouse_event(4, 0, 0, 0, UIntPtr.Zero);
     }
 }
 "@ -ErrorAction SilentlyContinue
 
-        # Bring newest Edge window to foreground
-        $hwnd = (Get-Process msedge -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -ne "" } |
-            Sort-Object StartTime -Descending | Select-Object -First 1).MainWindowHandle
-        if ($hwnd) { [WinHelper]::SetForegroundWindow($hwnd) | Out-Null }
-        Start-Sleep -Milliseconds 800
+            # Bring newest Edge window to foreground
+            Add-Type -AssemblyName System.Windows.Forms
+            $hwnd = (Get-Process msedge -ErrorAction SilentlyContinue |
+                Where-Object { $_.MainWindowTitle -ne "" } |
+                Sort-Object StartTime -Descending | Select-Object -First 1).MainWindowHandle
+            if ($hwnd) { [WinHelper2]::SetForegroundWindow($hwnd) | Out-Null }
+            Start-Sleep -Milliseconds 800
 
-        # Click center of screen to move focus from URL bar into Loop content
-        Add-Type -AssemblyName System.Windows.Forms
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-        [WinHelper]::Click([int]($screen.Bounds.Width/2), [int]($screen.Bounds.Height/2))
-        Start-Sleep -Milliseconds 700
+            # Click center of screen to focus Loop content (not URL bar)
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+            [WinHelper2]::Click([int]($screen.Bounds.Width/2), [int]($screen.Bounds.Height/2))
+            Start-Sleep -Milliseconds 700
 
-        # Ctrl+A twice: 1st selects current block, 2nd selects ALL blocks in Loop
-        [System.Windows.Forms.Clipboard]::Clear()
-        [System.Windows.Forms.SendKeys]::SendWait("^a")
-        Start-Sleep -Milliseconds 700
-        [System.Windows.Forms.SendKeys]::SendWait("^a")
-        Start-Sleep -Milliseconds 700
-        [System.Windows.Forms.SendKeys]::SendWait("^c")
-        Start-Sleep -Milliseconds 800
+            # Ctrl+A twice + Ctrl+C (1st = select block, 2nd = select all blocks)
+            [System.Windows.Forms.Clipboard]::Clear()
+            [System.Windows.Forms.SendKeys]::SendWait("^a")
+            Start-Sleep -Milliseconds 700
+            [System.Windows.Forms.SendKeys]::SendWait("^a")
+            Start-Sleep -Milliseconds 700
+            [System.Windows.Forms.SendKeys]::SendWait("^c")
+            Start-Sleep -Milliseconds 800
 
-        $loopText = [System.Windows.Forms.Clipboard]::GetText()
+            $loopText = [System.Windows.Forms.Clipboard]::GetText()
+            Write-Host ("  Clipboard : " + $loopText.Length + " chars") -ForegroundColor Gray
+            if ($loopText.Length -gt 0) {
+                $preview = ($loopText.Substring(0, [Math]::Min(200, $loopText.Length)) -replace "`r`n", " ")
+                Write-Host ("  Preview   : " + $preview) -ForegroundColor DarkGray
+            }
 
-        Write-Host ("  Clipboard : " + $loopText.Length + " chars") -ForegroundColor Gray
-        if ($loopText.Length -gt 0) {
-            $preview = ($loopText.Substring(0, [Math]::Min(200, $loopText.Length)) -replace "`r`n", " ")
-            Write-Host ("  Preview   : " + $preview) -ForegroundColor DarkGray
-        }
-
-        if ($loopText -and $loopText.Trim().Length -gt 50) {
-            Write-Host ("  Captured " + $loopText.Length + " chars from Loop") -ForegroundColor Green
-            [System.IO.File]::WriteAllText("$env:TEMP\loop_capture.txt", $loopText, [System.Text.Encoding]::UTF8)
-            Push-Location $SCRIPT_DIR
-            & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_capture.txt" --title $meetingTitle
-            $exitCode = $LASTEXITCODE
-            Pop-Location
-            Remove-Item "$env:TEMP\loop_capture.txt" -ErrorAction SilentlyContinue
+            if ($loopText -and $loopText.Trim().Length -gt 50) {
+                Write-Host ("  Captured " + $loopText.Length + " chars") -ForegroundColor Green
+                [System.IO.File]::WriteAllText("$env:TEMP\loop_cap.txt", $loopText, [System.Text.Encoding]::UTF8)
+                Push-Location $SCRIPT_DIR
+                & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_cap.txt" --title $meetingTitle
+                $exitCode = $LASTEXITCODE
+                Pop-Location
+                Remove-Item "$env:TEMP\loop_cap.txt" -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "  Loop content not captured (may need more load time)" -ForegroundColor Yellow
+            }
+            Remove-Item $downloadPath -ErrorAction SilentlyContinue
         } else {
-            Write-Host "  Loop content not captured (may need more load time)" -ForegroundColor Yellow
+            Write-Host "  Download did not complete -- trying clipboard fallback..." -ForegroundColor Yellow
+        }
+        }
         }
     } else {
         Write-Host "  Cannot construct Loop URL (OneDrive registry not found)" -ForegroundColor Yellow
