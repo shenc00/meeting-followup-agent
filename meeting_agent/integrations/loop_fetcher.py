@@ -195,12 +195,30 @@ class LoopFetcher:
     # ── Auth helper ───────────────────────────────────────────────────────────
 
     def _get_token(self) -> Optional[str]:
+        """
+        Authenticate for Loop/Files access.
+
+        Uses the Microsoft Graph Command Line Tools app (14d82eec-...) as the
+        default client — it is a Microsoft-owned first-party app pre-trusted by
+        most enterprise tenants and does NOT require admin consent for delegated
+        Files.Read.All.
+
+        Falls back to the custom client_id if set in config.
+        """
+        # Microsoft Graph Command Line Tools — pre-trusted in most M365 tenants
+        MSFT_GRAPH_CLI_CLIENT = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+
+        # Use custom client if configured, otherwise use the Microsoft app
+        client_id = self._client_id or MSFT_GRAPH_CLI_CLIENT
+
         from meeting_agent.integrations.auth import GraphAuthClient
+        # Scopes for Loop/Files access only (not the full mail/calendar set)
+        loop_scopes = ["https://graph.microsoft.com/Files.Read.All"]
         auth = GraphAuthClient(
             tenant_id=self._tenant_id,
-            client_id=self._client_id,
-            scopes=self._scopes,
-            cache_path=self._cache_path,
+            client_id=client_id,
+            scopes=loop_scopes,
+            cache_path="token_cache_loop.bin",   # separate cache so Loop auth doesn't conflict
         )
         return auth.get_token()
 

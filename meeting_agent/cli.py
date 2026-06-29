@@ -250,6 +250,30 @@ def auth_login(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+@app.command(name="loop-auth")
+def loop_auth(
+    config: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Authenticate for Loop access only (Files.Read.All via Microsoft Graph Command Line Tools app).
+
+    Uses Microsoft's own pre-trusted app ID — no admin consent required in most tenants.
+    Run this once; the token is cached automatically.
+    """
+    from meeting_agent.integrations.loop_fetcher import LoopFetcher
+    settings = load_settings(config)
+    fetcher = LoopFetcher(
+        tenant_id=settings.graph.tenant_id,
+        client_id="",   # forces use of Microsoft Graph Command Line Tools app
+        scopes=["https://graph.microsoft.com/Files.Read.All"],
+        cache_path="token_cache_loop.bin",
+    )
+    token = fetcher._get_token()
+    if token:
+        console.print("[green]Loop authentication successful. Token cached in token_cache_loop.bin[/green]")
+    else:
+        console.print("[red]Authentication failed.[/red]")
+
+
 @app.command(name="from-loop")
 def from_loop(
     title: Optional[str] = typer.Option(None, "--title", "-t", help="Meeting title to search for (partial match)"),
