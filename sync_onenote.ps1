@@ -72,13 +72,28 @@ $onedriveRoot = "$env:USERPROFILE\OneDrive - BD"
 if (-not (Test-Path $onedriveRoot)) { $onedriveRoot = "$env:USERPROFILE\OneDrive" }
 
 $loopFile = $null
-if (Test-Path $onedriveRoot) {
-    Write-Host "  [a] Searching OneDrive for .loop file matching '$meetingTitle'..." -ForegroundColor Gray
-    $cutoff = (Get-Date).AddDays(-2)
-    $loopFile = Get-ChildItem -Path $onedriveRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$($meetingTitle.Split(' ')[0])*" } |
+# Check the Meetings subfolder first (where Teams meeting notes are stored)
+$meetingsFolder = Join-Path $onedriveRoot "Meetings"
+$searchRoot = if (Test-Path $meetingsFolder) { $meetingsFolder } else { $onedriveRoot }
+
+if (Test-Path $searchRoot) {
+    Write-Host "  [a] Searching '$searchRoot' for .loop file matching '$meetingTitle'..." -ForegroundColor Gray
+    $cutoff = (Get-Date).AddDays(-30)
+    # Build keywords from meeting title (first 3 significant words)
+    $keywords = ($meetingTitle -split '\s+' | Where-Object { $_.Length -gt 2 } | Select-Object -First 3) -join '*'
+    $loopFile = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$keywords*" } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
+
+    # Fallback: match on first keyword only
+    if (-not $loopFile) {
+        $firstWord = ($meetingTitle -split '\s+' | Where-Object { $_.Length -gt 2 } | Select-Object -First 1)
+        $loopFile = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$firstWord*" } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+    }
 }
 
 if ($loopFile) {
