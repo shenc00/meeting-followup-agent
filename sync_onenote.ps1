@@ -152,8 +152,7 @@ if ($loopFile) {
             Start-Sleep -Seconds 30
 
             $wshell = New-Object -ComObject WScript.Shell
-
-            # Prefer the Edge window whose title contains the meeting name or "Loop"
+            $captured = $null   # initialise early so strict mode never throws VariableIsUndefined
             $keyword = ($meetingTitle -split ' ' | Select-Object -First 3) -join ' '
             $targetEdge = Get-Process msedge -ErrorAction SilentlyContinue |
                 Where-Object { $_.MainWindowTitle -like "*$keyword*" -or $_.MainWindowTitle -like "*Loop*" } |
