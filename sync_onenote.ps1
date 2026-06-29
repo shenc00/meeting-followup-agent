@@ -128,7 +128,11 @@ if ($loopFile) {
             $loopText = $null
         }
     } catch {
-        Write-Host ("  File read error: " + $_.Exception.Message) -ForegroundColor DarkYellow
+        if ($_.Exception.Message -like '*cloud file provider*') {
+            Write-Host "  File is cloud-only (OneDrive placeholder not synced) - using browser" -ForegroundColor Gray
+        } else {
+            Write-Host ("  File read error: " + $_.Exception.Message) -ForegroundColor DarkYellow
+        }
     }
 
     # --- Strategy B: Open browser + WScript automated Ctrl+A/Ctrl+C (no user prompt) ---
@@ -169,17 +173,27 @@ if ($loopFile) {
                 Write-Host ("  Focusing: " + $targetEdge.MainWindowTitle) -ForegroundColor Gray
                 $wshell.AppActivate($targetEdge.Id) | Out-Null
             } else {
-                Write-Host "  Could not identify Loop window — using foreground window" -ForegroundColor DarkYellow
+                Write-Host "  Could not identify Loop window - using foreground window" -ForegroundColor DarkYellow
                 $wshell.AppActivate("Microsoft Edge") | Out-Null
             }
 
-            Start-Sleep -Milliseconds 1500
-            [System.Windows.Forms.Clipboard]::Clear()
-            $wshell.SendKeys("^a")
-            Start-Sleep -Milliseconds 800
-            $wshell.SendKeys("^c")
             Start-Sleep -Milliseconds 1000
-            $captured = [System.Windows.Forms.Clipboard]::GetText()
+            # Ctrl+L focuses the address bar, Escape returns focus to the page body
+            # This ensures ^a hits the document content, not browser chrome
+            $wshell.SendKeys("^l")
+            Start-Sleep -Milliseconds 400
+            $wshell.SendKeys("{ESC}")
+            Start-Sleep -Milliseconds 700
+            $wshell.SendKeys("^a")
+            Start-Sleep -Milliseconds 1000
+            $wshell.SendKeys("^c")
+            Start-Sleep -Milliseconds 1500
+            try {
+                $captured = [System.Windows.Forms.Clipboard]::GetText()
+            } catch {
+                $captured = $null
+                Write-Host ("  Clipboard error: " + $_.Exception.Message) -ForegroundColor DarkYellow
+            }
 
             # Sanity check: reject if content looks like code, not meeting notes
             if ($captured -match '%md|%run |SELECT |CREATE TABLE|import pandas|import pyspark') {
