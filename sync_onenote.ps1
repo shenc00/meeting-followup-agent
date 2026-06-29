@@ -67,42 +67,85 @@ $env:OPENAI_API_KEY = [System.Environment]::GetEnvironmentVariable("OPENAI_API_K
 $beforeRun = (Get-Date).AddMinutes(-3)
 $exitCode  = 1
 
-# Attempt 1: Find .loop file in local OneDrive sync folder (NO auth/admin needed)
+# Attempt 1: Open Loop page in Edge (already signed in -- no OAuth/admin needed)
+# Construct SharePoint URL from OneDrive registry + local file path
 $onedriveRoot = "$env:USERPROFILE\OneDrive - BD"
 if (-not (Test-Path $onedriveRoot)) { $onedriveRoot = "$env:USERPROFILE\OneDrive" }
 
 $loopFile = $null
-# Check the Meetings subfolder first (where Teams meeting notes are stored)
 $meetingsFolder = Join-Path $onedriveRoot "Meetings"
 $searchRoot = if (Test-Path $meetingsFolder) { $meetingsFolder } else { $onedriveRoot }
 
 if (Test-Path $searchRoot) {
-    Write-Host "  [a] Searching '$searchRoot' for .loop file matching '$meetingTitle'..." -ForegroundColor Gray
-    $cutoff = (Get-Date).AddDays(-30)
-    # Build keywords from meeting title (first 3 significant words)
-    $keywords = ($meetingTitle -split '\s+' | Where-Object { $_.Length -gt 2 } | Select-Object -First 3) -join '*'
-    $loopFile = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
+    $cutoff    = (Get-Date).AddDays(-30)
+    $keywords  = ($meetingTitle -split '\s+' | Where-Object { $_.Length -gt 2 } | Select-Object -First 3) -join '*'
+    $loopFile  = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$keywords*" } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    # Fallback: match on first keyword only
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $loopFile) {
         $firstWord = ($meetingTitle -split '\s+' | Where-Object { $_.Length -gt 2 } | Select-Object -First 1)
-        $loopFile = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
+        $loopFile  = Get-ChildItem -Path $searchRoot -Filter "*.loop" -Recurse -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -gt $cutoff -and $_.BaseName -like "*$firstWord*" } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
 }
 
 if ($loopFile) {
     Write-Host ("  Found : " + $loopFile.BaseName) -ForegroundColor Green
-    Write-Host ("  Path  : " + $loopFile.FullName) -ForegroundColor Gray
-    Push-Location $SCRIPT_DIR
-    & $VENV_PYTHON -m meeting_agent.cli from-loop --file $loopFile.FullName --title $meetingTitle
-    $exitCode = $LASTEXITCODE
-    Pop-Location
+    $odReg    = Get-ItemProperty "HKCU:\Software\Microsoft\OneDrive\Accounts\Business1" -ErrorAction SilentlyContinue
+    $spBase   = if ($odReg) { $odReg.ServiceEndpointUri -replace "/_api$", "" } else { "" }
+    $odFolder = if ($odReg) { $odReg.UserFolder } else { $onedriveRoot }
+
+    if ($spBase) {
+        $relPath = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
+        $loopUrl = ($spBase + "/Documents/" + $relPath) -replace ' ', '%20'
+        Write-Host "  [a] Opening Loop in Edge (no auth needed)..." -ForegroundColor Green
+        Write-Host ("  URL : " + $loopUrl) -ForegroundColor DarkGray
+
+        # Open Edge with the Loop SharePoint URL (user already signed in to Edge)
+        $edgeExe = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        if (-not (Test-Path $edgeExe)) { $edgeExe = "msedge.exe" }
+        $edgeProc = Start-Process $edgeExe -ArgumentList "--new-window `"$loopUrl`"" -PassThru
+
+        Write-Host "  Waiting 12s for Loop to render..." -ForegroundColor Gray
+        Start-Sleep -Seconds 12
+
+        # Bring Edge to foreground and auto-capture all text
+        Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+public class WinFocus { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h); }
+"@ -ErrorAction SilentlyContinue
+
+        $hwnd = (Get-Process msedge -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowTitle -ne "" } |
+            Sort-Object StartTime -Descending | Select-Object -First 1).MainWindowHandle
+        if ($hwnd) { [WinFocus]::SetForegroundWindow($hwnd) | Out-Null }
+        Start-Sleep -Milliseconds 500
+
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.Clipboard]::Clear()
+        [System.Windows.Forms.SendKeys]::SendWait("^a")   # Select all Loop content
+        Start-Sleep -Milliseconds 700
+        [System.Windows.Forms.SendKeys]::SendWait("^c")   # Copy
+        Start-Sleep -Milliseconds 700
+
+        $loopText = [System.Windows.Forms.Clipboard]::GetText()
+
+        if ($loopText -and $loopText.Trim().Length -gt 50) {
+            Write-Host ("  Captured " + $loopText.Length + " chars from Loop page") -ForegroundColor Green
+            # Feed captured text to agent via stdin temp file
+            [System.IO.File]::WriteAllText("$env:TEMP\loop_capture.txt", $loopText, [System.Text.Encoding]::UTF8)
+            Push-Location $SCRIPT_DIR
+            & $VENV_PYTHON -m meeting_agent.cli from-file --notes "$env:TEMP\loop_capture.txt" --title $meetingTitle
+            $exitCode = $LASTEXITCODE
+            Pop-Location
+            Remove-Item "$env:TEMP\loop_capture.txt" -ErrorAction SilentlyContinue
+        } else {
+            Write-Host "  Loop content not captured (may need more load time)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  Cannot construct Loop URL (OneDrive registry not found)" -ForegroundColor Yellow
+    }
 }
 
 if ($exitCode -ne 0) {
