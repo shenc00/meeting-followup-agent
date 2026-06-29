@@ -250,6 +250,87 @@ def auth_login(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+@app.command(name="from-loop")
+def from_loop(
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="Meeting title to search for (partial match)"),
+    config: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Fetch the latest Loop meeting notes from OneDrive/SharePoint via Graph API and extract action items.
+
+    Requires Files.Read.All scope in config.yaml and a valid Graph token.
+    Run 'meeting-agent auth' once to authenticate.
+    """
+    from meeting_agent.integrations.loop_fetcher import LoopFetcher
+    from datetime import datetime as dt
+    import uuid
+
+    settings = load_settings(config)
+
+    if not settings.graph.tenant_id or not settings.graph.client_id:
+        console.print("[red]graph.tenant_id and graph.client_id must be set in config.yaml[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[cyan]Searching Loop for{'  ' + title if title else ' latest'} meeting notes...[/cyan]")
+
+    fetcher = LoopFetcher(
+        tenant_id=settings.graph.tenant_id,
+        client_id=settings.graph.client_id,
+        scopes=settings.graph.scopes,
+        cache_path=settings.graph.token_cache_path,
+    )
+
+    page_title, notes_text = fetcher.fetch_latest(title)
+
+    if not notes_text:
+        console.print("[red]No Loop notes found. Make sure you have run 'meeting-agent auth' and that Files.Read.All is in your scopes.[/red]")
+        raise typer.Exit(1)
+
+    meeting_title = title or page_title or "Meeting"
+    console.print(f"  Found : [bold]{page_title}[/bold] ({len(notes_text)} chars extracted)")
+    console.print(f"\nProcessing [bold]{meeting_title}[/bold] from Loop notes...")
+
+    import tempfile, os
+    from meeting_agent.engines.ingestion import MeetingIngestionEngine
+    from meeting_agent.engines.extraction import ActionExtractionEngine
+    from meeting_agent.engines.ownership import OwnershipEngine
+    from meeting_agent.engines.followup import FollowUpEngine
+    from meeting_agent.engines.email_generation import EmailGenerationEngine
+    from meeting_agent.engines.task_management import TaskManagementEngine
+    from meeting_agent.engines.governance import GovernanceEngine
+    from meeting_agent.engines.documentation import DocumentationEngine
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tmp:
+        tmp.write(notes_text)
+        tmp_path = tmp.name
+
+    try:
+        mid      = str(uuid.uuid4())[:8]
+        date_str = dt.now().isoformat()
+
+        ingestion   = MeetingIngestionEngine(settings)
+        extraction  = ActionExtractionEngine(settings)
+        ownership   = OwnershipEngine(settings)
+        followup    = FollowUpEngine(settings)
+        email_gen   = EmailGenerationEngine(settings, graph_client=None)
+        task_engine = TaskManagementEngine(settings)
+        governance  = GovernanceEngine()
+        doc_engine  = DocumentationEngine(settings, task_engine)
+
+        context = ingestion.ingest_from_files(
+            meeting_id=mid, title=meeting_title, date_str=date_str, notes_path=tmp_path,
+        )
+        actions = extraction.extract(context)
+        ownership.resolve(actions, context)
+        plans   = followup.build_plans(actions, context)
+        emails  = email_gen.generate(actions, plans, context)
+        tasks   = [task_engine.upsert_from_action(a, mid) for a in actions]
+        summary = doc_engine.generate_meeting_summary(context, tasks)
+        _print_result({"meeting_id": mid, "tasks": tasks, "emails": emails,
+                       "meeting_requests": [], "summary": summary})
+    finally:
+        os.unlink(tmp_path)
+
+
 @app.command(name="from-clipboard")
 def from_clipboard(
     title: str = typer.Option(..., "--title", "-t", help="Meeting title"),

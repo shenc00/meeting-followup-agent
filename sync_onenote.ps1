@@ -54,7 +54,7 @@ if (-not $meetingTitle) {
 
 Write-Host ""
 
-# --- STEP 2: Extract notes from Loop (clipboard) or Outlook email ---
+# --- STEP 2: Extract notes -- try Loop (Graph API), then clipboard, then Outlook email ---
 
 Write-Host "[2/3] Extracting action items from meeting notes..." -ForegroundColor Yellow
 
@@ -64,23 +64,32 @@ if (-not (Test-Path $VENV_PYTHON)) {
 }
 
 $env:OPENAI_API_KEY = [System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "User")
-
-# Check if clipboard has content (Loop notes)
-Add-Type -AssemblyName System.Windows.Forms
-$clipText = [System.Windows.Forms.Clipboard]::GetText()
-
 $beforeRun = (Get-Date).AddSeconds(-5)
-$exitCode  = 0
+$exitCode  = 1
 
-if ($clipText -and $clipText.Trim().Length -gt 50) {
-    Write-Host "  Loop notes detected in clipboard ($($clipText.Length) chars)" -ForegroundColor Green
-    Write-Host "  Processing via clipboard..." -ForegroundColor Gray
-    Push-Location $SCRIPT_DIR
-    & $VENV_PYTHON -m meeting_agent.cli from-clipboard --title $meetingTitle
-    $exitCode = $LASTEXITCODE
-    Pop-Location
-} else {
-    Write-Host "  No Loop content in clipboard -- trying Outlook inbox..." -ForegroundColor Gray
+# Attempt 1: Loop via Graph API (Files.Read.All -- no admin consent needed)
+Write-Host "  [a] Trying Loop (Graph API)..." -ForegroundColor Gray
+Push-Location $SCRIPT_DIR
+& $VENV_PYTHON -m meeting_agent.cli from-loop --title $meetingTitle
+$exitCode = $LASTEXITCODE
+Pop-Location
+
+if ($exitCode -ne 0) {
+    # Attempt 2: clipboard (user copied Loop page with Ctrl+A, Ctrl+C)
+    Add-Type -AssemblyName System.Windows.Forms
+    $clipText = [System.Windows.Forms.Clipboard]::GetText()
+    if ($clipText -and $clipText.Trim().Length -gt 50) {
+        Write-Host "  [b] Loop content detected in clipboard -- processing..." -ForegroundColor Gray
+        Push-Location $SCRIPT_DIR
+        & $VENV_PYTHON -m meeting_agent.cli from-clipboard --title $meetingTitle
+        $exitCode = $LASTEXITCODE
+        Pop-Location
+    }
+}
+
+if ($exitCode -ne 0) {
+    # Attempt 3: Outlook email from facilitator
+    Write-Host "  [c] Trying Outlook inbox (facilitator email)..." -ForegroundColor Gray
     $facilitatorEmail = ""
     if (Test-Path $CONFIG_PATH) {
         $configContent = Get-Content $CONFIG_PATH -Raw -Encoding UTF8
@@ -89,10 +98,7 @@ if ($clipText -and $clipText.Trim().Length -gt 50) {
         }
     }
     $agentArgs = @("-m", "meeting_agent.cli", "fetch-notes", "--title", $meetingTitle)
-    if ($facilitatorEmail) {
-        $agentArgs += @("--facilitator", $facilitatorEmail)
-        Write-Host ("  Facilitator : " + $facilitatorEmail) -ForegroundColor Gray
-    }
+    if ($facilitatorEmail) { $agentArgs += @("--facilitator", $facilitatorEmail) }
     Push-Location $SCRIPT_DIR
     & $VENV_PYTHON @agentArgs
     $exitCode = $LASTEXITCODE
@@ -101,7 +107,10 @@ if ($clipText -and $clipText.Trim().Length -gt 50) {
 
 if ($exitCode -ne 0) {
     Write-Host ""
-    Write-Host "  Tip: Open the Loop meeting page, press Ctrl+A then Ctrl+C, then run this again." -ForegroundColor Yellow
+    Write-Host "  Could not find notes for '$meetingTitle'." -ForegroundColor Yellow
+    Write-Host "  Options:" -ForegroundColor Yellow
+    Write-Host "    1. Run 'meeting-agent auth' to enable Loop auto-fetch" -ForegroundColor Yellow
+    Write-Host "    2. Open the Loop page -> Ctrl+A -> Ctrl+C -> re-run" -ForegroundColor Yellow
     exit 0
 }
 
