@@ -196,10 +196,6 @@ public class WinHelper2 {
         } else {
             Write-Host "  Download did not complete -- trying clipboard fallback..." -ForegroundColor Yellow
         }
-        }
-        }
-    } else {
-        Write-Host "  Cannot construct Loop URL (OneDrive registry not found)" -ForegroundColor Yellow
     }
 }
 
