@@ -108,8 +108,9 @@ if ($loopFile) {
 
     if ($spBase) {
         $relPath = $loopFile.FullName.Substring($odFolder.Length + 1).Replace("\", "/")
-        # Use ?Web=1 to force SharePoint to render the file in browser (not download)
-        $loopWebUrl = $spBase + "/" + $relPath + "?Web=1"
+        # OneDrive for Business syncs to the SharePoint Documents library,
+        # so the relative path must be prefixed with /Documents/
+        $loopWebUrl = $spBase + "/Documents/" + $relPath + "?Web=1"
         Write-Host "  [a] Opening Loop in browser (no download, no auth needed)..." -ForegroundColor Green
         Write-Host ("  URL : " + $loopWebUrl) -ForegroundColor DarkGray
 
