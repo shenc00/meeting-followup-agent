@@ -54,48 +54,65 @@ if (-not $meetingTitle) {
 
 Write-Host ""
 
-# --- STEP 2: Fetch facilitator notes and run agent ---
+# --- STEP 2: Extract notes from Loop (clipboard) or Outlook email ---
 
-Write-Host "[2/3] Fetching facilitator notes and extracting action items..." -ForegroundColor Yellow
+Write-Host "[2/3] Extracting action items from meeting notes..." -ForegroundColor Yellow
 
 if (-not (Test-Path $VENV_PYTHON)) {
     Write-Host "ERROR: .venv not found. Run install.bat first." -ForegroundColor Red
     exit 1
 }
 
-$facilitatorEmail = ""
-if (Test-Path $CONFIG_PATH) {
-    $configContent = Get-Content $CONFIG_PATH -Raw -Encoding UTF8
-    if ($configContent -match 'facilitator:\s*[\r\n]+\s+email:\s+"([^"]+@[^"]+)"') {
-        $facilitatorEmail = $Matches[1].Trim()
-    }
-}
-
-$agentArgs = @("-m", "meeting_agent.cli", "fetch-notes", "--title", $meetingTitle)
-if ($facilitatorEmail) {
-    $agentArgs += @("--facilitator", $facilitatorEmail)
-    Write-Host ("  Facilitator : " + $facilitatorEmail) -ForegroundColor Gray
-}
-
 $env:OPENAI_API_KEY = [System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "User")
-Push-Location $SCRIPT_DIR
-& $VENV_PYTHON @agentArgs
-$exitCode = $LASTEXITCODE
-Pop-Location
+
+# Check if clipboard has content (Loop notes)
+Add-Type -AssemblyName System.Windows.Forms
+$clipText = [System.Windows.Forms.Clipboard]::GetText()
+
+$beforeRun = (Get-Date).AddSeconds(-5)
+$exitCode  = 0
+
+if ($clipText -and $clipText.Trim().Length -gt 50) {
+    Write-Host "  Loop notes detected in clipboard ($($clipText.Length) chars)" -ForegroundColor Green
+    Write-Host "  Processing via clipboard..." -ForegroundColor Gray
+    Push-Location $SCRIPT_DIR
+    & $VENV_PYTHON -m meeting_agent.cli from-clipboard --title $meetingTitle
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+} else {
+    Write-Host "  No Loop content in clipboard -- trying Outlook inbox..." -ForegroundColor Gray
+    $facilitatorEmail = ""
+    if (Test-Path $CONFIG_PATH) {
+        $configContent = Get-Content $CONFIG_PATH -Raw -Encoding UTF8
+        if ($configContent -match 'facilitator:\s*[\r\n]+\s+email:\s+"([^"]+@[^"]+)"') {
+            $facilitatorEmail = $Matches[1].Trim()
+        }
+    }
+    $agentArgs = @("-m", "meeting_agent.cli", "fetch-notes", "--title", $meetingTitle)
+    if ($facilitatorEmail) {
+        $agentArgs += @("--facilitator", $facilitatorEmail)
+        Write-Host ("  Facilitator : " + $facilitatorEmail) -ForegroundColor Gray
+    }
+    Push-Location $SCRIPT_DIR
+    & $VENV_PYTHON @agentArgs
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+}
 
 if ($exitCode -ne 0) {
-    Write-Host ("  Agent returned error " + $exitCode + " -- aborting OneNote sync.") -ForegroundColor Red
-    exit $exitCode
+    Write-Host ""
+    Write-Host "  Tip: Open the Loop meeting page, press Ctrl+A then Ctrl+C, then run this again." -ForegroundColor Yellow
+    exit 0
 }
 
 Write-Host ""
 
-# --- STEP 3: Load tasks and sync to OneNote ---
+# --- STEP 3: Sync only tasks created in this run to OneNote ---
 
 Write-Host "[3/3] Syncing todos to OneNote..." -ForegroundColor Yellow
 
 if (-not (Test-Path $DB_PATH)) {
-    Write-Host "ERROR: data/actions.json not found after agent run." -ForegroundColor Red
+    Write-Host "ERROR: data/actions.json not found." -ForegroundColor Red
     exit 1
 }
 
@@ -103,17 +120,17 @@ $db        = Get-Content $DB_PATH -Raw -Encoding UTF8 | ConvertFrom-Json
 $tasksList = @()
 $db.tasks.PSObject.Properties | ForEach-Object { $tasksList += $_.Value }
 
-if ($tasksList.Count -eq 0) {
-    Write-Host "No tasks found." -ForegroundColor Yellow
+$tasks = $tasksList | Where-Object {
+    try { ([datetime]$_.created_at) -gt $beforeRun } catch { $false }
+}
+
+if ($tasks.Count -eq 0) {
+    Write-Host "  No new tasks were extracted from this meeting." -ForegroundColor Yellow
     exit 0
 }
 
-$latest    = $tasksList | Sort-Object created_at -Descending | Select-Object -First 1
-$meetingId = $latest.meeting_id
-$tasks     = $tasksList | Where-Object { $_.meeting_id -eq $meetingId }
-try { $meetingDate = [datetime]$latest.created_at } catch { $meetingDate = Get-Date }
-
-Write-Host ("  Tasks : " + $tasks.Count) -ForegroundColor White
+try { $meetingDate = [datetime]($tasks[0].created_at) } catch { $meetingDate = Get-Date }
+Write-Host ("  New tasks : " + $tasks.Count) -ForegroundColor White
 
 try {
     $onenote = New-Object -ComObject "OneNote.Application"
@@ -142,12 +159,12 @@ $onenote.GetHierarchy($sectionId, [Microsoft.Office.Interop.OneNote.HierarchySco
 $xpathPage = "//*[local-name()='Page'][@name='" + $PAGE_NAME + "']"
 $page = $pages.SelectSingleNode($xpathPage)
 if ($null -eq $page) {
-    Write-Host ("  Page : '" + $PAGE_NAME + "' (creating new)") -ForegroundColor Yellow
     $newPageId = [string]::Empty
     $onenote.CreateNewPage($sectionId, [ref]$newPageId)
     $titleXml = '<?xml version="1.0"?><one:Page xmlns:one="' + $ONE_NS + '" ID="' + $newPageId + '"><one:Title><one:OE><one:T><![CDATA[' + $PAGE_NAME + ']]></one:T></one:OE></one:Title></one:Page>'
     $onenote.UpdatePageContent($titleXml)
     $pageId = $newPageId
+    Write-Host ("  Page : '" + $PAGE_NAME + "' created") -ForegroundColor Yellow
 } else {
     $pageId = $page.ID
     Write-Host ("  Page : '" + $PAGE_NAME + "' found") -ForegroundColor Green
@@ -200,6 +217,6 @@ $blockXml = '<?xml version="1.0"?>' +
 $onenote.UpdatePageContent($blockXml)
 
 Write-Host ""
-Write-Host ("  Done! " + $tasks.Count + " todo(s) added to:") -ForegroundColor Green
+Write-Host ("  Done! " + $tasks.Count + " new todo(s) added to:") -ForegroundColor Green
 Write-Host ("  OneNote -> " + $SECTION_NAME + " -> " + $PAGE_NAME) -ForegroundColor Green
 Write-Host ""

@@ -250,6 +250,74 @@ def auth_login(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+@app.command(name="from-clipboard")
+def from_clipboard(
+    title: str = typer.Option(..., "--title", "-t", help="Meeting title"),
+    config: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Read meeting notes from clipboard (copy from Loop/OneNote/Teams) and extract action items."""
+    import win32clipboard
+    win32clipboard.OpenClipboard()
+    try:
+        text = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+    except Exception:
+        console.print("[red]Clipboard is empty or does not contain text. Copy the Loop page content first (Ctrl+A, Ctrl+C).[/red]")
+        raise typer.Exit(1)
+    finally:
+        win32clipboard.CloseClipboard()
+
+    if not text or not text.strip():
+        console.print("[red]Clipboard is empty. Copy the Loop page content first (Ctrl+A, Ctrl+C).[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\nProcessing [bold]{title}[/bold] from clipboard ({len(text)} chars)...")
+
+    import tempfile, os
+    from datetime import datetime as dt
+    from meeting_agent.engines.ingestion import MeetingIngestionEngine
+    from meeting_agent.engines.extraction import ActionExtractionEngine
+    from meeting_agent.engines.ownership import OwnershipEngine
+    from meeting_agent.engines.followup import FollowUpEngine
+    from meeting_agent.engines.email_generation import EmailGenerationEngine
+    from meeting_agent.engines.task_management import TaskManagementEngine
+    from meeting_agent.engines.governance import GovernanceEngine
+    from meeting_agent.engines.documentation import DocumentationEngine
+    import uuid
+
+    settings = load_settings(config)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tmp:
+        tmp.write(text)
+        tmp_path = tmp.name
+
+    try:
+        mid      = str(uuid.uuid4())[:8]
+        date_str = dt.now().isoformat()
+
+        ingestion   = MeetingIngestionEngine(settings)
+        extraction  = ActionExtractionEngine(settings)
+        ownership   = OwnershipEngine(settings)
+        followup    = FollowUpEngine(settings)
+        email_gen   = EmailGenerationEngine(settings, graph_client=None)
+        task_engine = TaskManagementEngine(settings)
+        governance  = GovernanceEngine()
+        doc_engine  = DocumentationEngine(settings, task_engine)
+
+        context = ingestion.ingest_from_files(
+            meeting_id=mid, title=title, date_str=date_str, notes_path=tmp_path,
+        )
+        actions = extraction.extract(context)
+        ownership.resolve(actions, context)
+        plans   = followup.build_plans(actions, context)
+        emails  = email_gen.generate(actions, plans, context)
+        tasks   = [task_engine.upsert_from_action(a, mid) for a in actions]
+        summary = doc_engine.generate_meeting_summary(context, tasks)
+        _print_result({"meeting_id": mid, "tasks": tasks, "emails": emails,
+                       "meeting_requests": [], "summary": summary})
+    finally:
+        os.unlink(tmp_path)
+
+
 @app.command(name="fetch-notes")
 def fetch_notes(
     title: str = typer.Option(..., "--title", "-t", help="Meeting title"),
