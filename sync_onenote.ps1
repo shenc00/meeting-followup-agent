@@ -114,10 +114,11 @@ if ($loopFile) {
         $goodLines = @()
         foreach ($ln in $loopLines) {
             $trimmed = $ln.Trim()
-            if ($trimmed.Length -ge 10) {
-                $alphaCount = ($trimmed -replace '[^A-Za-z]', '').Length
-                if ($alphaCount -ge 6) { $goodLines += $trimmed }
-            }
+            if ($trimmed.Length -lt 10) { continue }
+            # Skip CSS/style noise embedded by Loop page rendering
+            if ($trimmed -match 'margin-bottom|margin-top|counter-reset|list-style-type|scriptor-list|listItem|font-size|padding') { continue }
+            $alphaCount = ($trimmed -replace '[^A-Za-z]', '').Length
+            if ($alphaCount -ge 6) { $goodLines += $trimmed }
         }
         $loopText = ($goodLines -join "`n").Trim()
         if ($loopText.Length -gt 100) {

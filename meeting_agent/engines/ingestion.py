@@ -162,6 +162,9 @@ class MeetingIngestionEngine:
         combined = "\n\n".join(parts)
         # Strip HTML tags
         combined = re.sub(r"<[^>]+>", " ", combined)
+        # Strip CSS rule blocks embedded in Loop/Teams page exports
+        # e.g. "ol {margin-bottom:0in;}" or "ol.scriptor-... {counter-reset: section;}"
+        combined = re.sub(r"(?:ol|ul|li)[^{\n]*\{[^}]*\}", " ", combined)
         # Collapse whitespace
         combined = re.sub(r"[ \t]+", " ", combined)
         combined = re.sub(r"\n{3,}", "\n\n", combined)
